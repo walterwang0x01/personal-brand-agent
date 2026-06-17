@@ -34,3 +34,6 @@ output/data/
 
 # macOS
 .DS_Store
+
+# CodeGraph
+.codegraph/

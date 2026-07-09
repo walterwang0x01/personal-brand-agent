@@ -17,6 +17,7 @@ from typing import TypedDict
 
 from langgraph.graph import StateGraph, END
 
+from brand_agent.article_schema import EXPORT_ONLY_PLATFORMS, ensure_article_schema
 
 # ============================================
 # Postiz 平台标识 → 内容适配规则
@@ -28,6 +29,7 @@ SHORT_CONTENT_PLATFORMS = {"x", "threads", "bluesky", "mastodon"}
 LONG_CONTENT_PLATFORMS = {"medium", "devto", "hashnode", "wordpress", "linkedin", "linkedin-page", "reddit"}
 # 其他平台
 OTHER_PLATFORMS = {"facebook", "instagram", "telegram", "discord"}
+AUTO_PUBLISH_PLATFORMS = SHORT_CONTENT_PLATFORMS | LONG_CONTENT_PLATFORMS | OTHER_PLATFORMS
 
 
 class DistributorState(TypedDict):
@@ -50,13 +52,15 @@ def load_article(state: DistributorState) -> DistributorState:
         if articles_dir.exists():
             files = sorted(articles_dir.glob("*.json"), reverse=True)
             if files:
-                state["article"] = json.loads(files[0].read_text(encoding="utf-8"))
+                state["article"] = ensure_article_schema(
+                    json.loads(files[0].read_text(encoding="utf-8"))
+                )
                 return state
 
     # 按 ID 查找
     article_path = Path(f"data/articles/{state['article_id']}.json")
     if article_path.exists():
-        state["article"] = json.loads(article_path.read_text(encoding="utf-8"))
+        state["article"] = ensure_article_schema(json.loads(article_path.read_text(encoding="utf-8")))
         return state
 
     state["article"] = {}
@@ -78,10 +82,14 @@ def adapt_content(state: DistributorState) -> DistributorState:
     # 如果 article 中有预生成的 twitter_thread（例如来自 briefing_to_post），
     # 直接使用；否则按规则适配。
     pregen_thread = article.get("twitter_thread") or []
+    existing_drafts = article.get("platform_drafts") or {}
 
     adapted = {}
     for platform in state["platforms"]:
-        if platform == "x":
+        if platform in EXPORT_ONLY_PLATFORMS:
+            draft = existing_drafts.get(platform) or {}
+            adapted[platform] = draft.get("body_markdown") or ""
+        elif platform == "x":
             if pregen_thread:
                 adapted[platform] = pregen_thread
             else:
@@ -151,6 +159,7 @@ def _adapt_for_x(title: str, excerpt: str, body: str, tag_str: str) -> list[str]
 def publish_to_platforms(state: DistributorState) -> DistributorState:
     """通过 Postiz API 发布到各平台"""
     from brand_agent.config import settings
+    from brand_agent.agents.publish_pack import export_publish_pack
 
     # 文章加载失败 → 全部平台返回提示
     if not state.get("article"):
@@ -160,22 +169,66 @@ def publish_to_platforms(state: DistributorState) -> DistributorState:
         }
         return state
 
+    export_platforms = [p for p in state["platforms"] if p in EXPORT_ONLY_PLATFORMS]
+    auto_platforms = [p for p in state["platforms"] if p in AUTO_PUBLISH_PLATFORMS]
+    unsupported_platforms = [
+        p for p in state["platforms"] if p not in EXPORT_ONLY_PLATFORMS | AUTO_PUBLISH_PLATFORMS
+    ]
+
+    results = {}
+
+    for platform in unsupported_platforms:
+        results[platform] = {
+            "success": False,
+            "message": f"暂不支持平台: {platform}",
+            "mode": "unsupported",
+        }
+
+    if export_platforms:
+        try:
+            pack_result = export_publish_pack(state["article"]["id"], export_platforms)
+            for platform in export_platforms:
+                path = pack_result["files"].get(platform, pack_result["pack_dir"])
+                results[platform] = {
+                    "success": True,
+                    "message": f"已导出发布包: {path}",
+                    "mode": "export_bundle",
+                    "pack_dir": pack_result["pack_dir"],
+                }
+        except Exception as e:
+            for platform in export_platforms:
+                results[platform] = {
+                    "success": False,
+                    "message": f"导出发布包失败: {e}",
+                    "mode": "export_bundle",
+                }
+
+    if not auto_platforms:
+        state["results"] = results
+        return state
+
     if not settings.postiz_url or not settings.postiz_api_key:
         # Postiz 未配置，返回提示
-        state["results"] = {
-            p: {"success": False, "message": "Postiz 未配置，请设置 POSTIZ_URL 和 POSTIZ_API_KEY"}
-            for p in state["platforms"]
-        }
+        for platform in auto_platforms:
+            results[platform] = {
+                "success": False,
+                "message": "Postiz 未配置，请设置 POSTIZ_URL 和 POSTIZ_API_KEY",
+                "mode": "auto_publish",
+            }
+        state["results"] = results
         return state
 
     from brand_agent.platforms.postiz import PostizClient
     client = PostizClient(settings.postiz_url, settings.postiz_api_key)
 
-    results = {}
-    for platform in state["platforms"]:
+    for platform in auto_platforms:
         content = state["adapted_content"].get(platform)
         if not content:
-            results[platform] = {"success": False, "message": "无适配内容"}
+            results[platform] = {
+                "success": False,
+                "message": "无适配内容",
+                "mode": "auto_publish",
+            }
             continue
 
         try:
@@ -197,12 +250,17 @@ def publish_to_platforms(state: DistributorState) -> DistributorState:
                 "success": True,
                 "message": f"已发布到 {platform}",
                 "post_id": result[0].get("postId") if isinstance(result, list) else None,
+                "mode": "auto_publish",
             }
         except ValueError as e:
             # 未绑定该平台
-            results[platform] = {"success": False, "message": str(e)}
+            results[platform] = {"success": False, "message": str(e), "mode": "auto_publish"}
         except Exception as e:
-            results[platform] = {"success": False, "message": f"发布失败: {e}"}
+            results[platform] = {
+                "success": False,
+                "message": f"发布失败: {e}",
+                "mode": "auto_publish",
+            }
 
     state["results"] = results
     return state

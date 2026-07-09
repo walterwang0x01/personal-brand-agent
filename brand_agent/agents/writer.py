@@ -4,7 +4,10 @@ import json
 from datetime import date
 from pathlib import Path
 from typing import TypedDict
+
 from langgraph.graph import StateGraph, END
+
+from brand_agent.article_schema import build_canonical_article
 
 
 class WriterState(TypedDict):
@@ -55,20 +58,34 @@ def write_draft(state: WriterState) -> WriterState:
 def format_output(state: WriterState) -> WriterState:
     """根据目标风格格式化输出"""
     today = date.today().isoformat()
-    article = {
-        "id": state["topic"].lower().replace(" ", "-").replace("：", "-"),
-        "title": state["topic"],
-        "date": today,
-        "tags": [],  # TODO: LLM 自动生成标签
-        "excerpt": "",  # TODO: LLM 生成摘要
-        "body": state["draft"],
-    }
+    article_id = state["topic"].lower().replace(" ", "-").replace("：", "-")
+    article = build_canonical_article(
+        article_id=article_id,
+        title=state["topic"],
+        date=today,
+        tags=[],
+        summary="",
+        body_markdown=state["draft"],
+        source_type="knowledge",
+        source_briefing="",
+        source_topic=state["topic"],
+        key_points=[],
+        references=[],
+        twitter_thread=[],
+        platform_drafts={},
+        publish_pack_path="",
+        portfolio_url="",
+        extra_fields={
+            "style": state["style"],
+            "outline": state["outline"],
+        },
+    )
 
     # 保存到本地
     save_dir = Path("data/articles")
     save_dir.mkdir(parents=True, exist_ok=True)
-    save_path = save_dir / f"{today}-{article['id']}.json"
-    save_path.write_text(json.dumps(article, ensure_ascii=False, indent=2))
+    save_path = save_dir / f"{today}-{article_id}.json"
+    save_path.write_text(json.dumps(article, ensure_ascii=False, indent=2), encoding="utf-8")
 
     state["final_article"] = article
     state["saved_path"] = str(save_path)

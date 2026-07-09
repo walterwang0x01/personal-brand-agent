@@ -13,6 +13,10 @@ app = typer.Typer(
 console = Console()
 
 
+def _platform_list(value: str) -> list[str]:
+    return [p.strip() for p in value.split(",") if p.strip()]
+
+
 @app.command()
 def init(
     notes_dir: str = typer.Option(
@@ -147,14 +151,14 @@ def publish_briefing(
     date: Optional[str] = typer.Option(None, "--date", "-d", help="简报日期 YYYY-MM-DD"),
     platforms: str = typer.Option(
         "x", "--platforms", "-p",
-        help="Postiz 平台标识，逗号分隔: x,linkedin,bluesky",
+        help="平台标识，逗号分隔: x,wechat,juejin,zhihu,xiaohongshu,weibo,linkedin,bluesky",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="只生成内容，不调用 Postiz 发布",
     ),
 ):
     """一键：主仓简报 → 生成 Thread → Postiz 分发"""
-    platform_list = [p.strip() for p in platforms.split(",") if p.strip()]
+    platform_list = _platform_list(platforms)
     console.print(Panel(
         f"🚀 简报分发: {topic} → {', '.join(platform_list)}",
         style="bold blue",
@@ -172,15 +176,21 @@ def publish_briefing(
     console.print(f"  ✅ 已生成: {article['id']}（{gen['headlines_count']} 条头条）")
 
     if dry_run:
-        console.print("  [dim]--dry-run 模式，跳过 Postiz 发布[/]")
+        console.print("  [dim]--dry-run 模式，跳过实际发布/导出[/]")
         for i, tweet in enumerate(gen.get("twitter_thread", []), 1):
             console.print(f"\n  [dim]— {i} —[/] {tweet[:120]}...")
+        article_drafts = article.get("platform_drafts", {})
+        if article_drafts:
+            console.print(f"\n  🧾 已有平台草稿: {', '.join(sorted(article_drafts.keys()))}")
         return
 
     results = distribute_article(article_id=article["id"], platforms=platform_list)
     for platform, result in results.items():
         status = "✅" if result["success"] else "❌"
         console.print(f"  {status} {platform}: {result['message']}")
+    exported = [r.get("pack_dir") for r in results.values() if r.get("mode") == "export_bundle"]
+    if exported:
+        console.print(f"\n  📦 发布包目录: {exported[0]}")
 
 
 @app.command()
@@ -210,11 +220,11 @@ def distribute(
     ),
     platforms: str = typer.Option(
         "x", "--platforms", "-p",
-        help="Postiz 平台标识，逗号分隔: x,linkedin,bluesky,medium,threads 等"
+        help="平台标识，逗号分隔: x,wechat,juejin,zhihu,xiaohongshu,weibo,linkedin,bluesky,medium,threads 等"
     ),
 ):
-    """将文章通过 Postiz 分发到多个平台"""
-    platform_list = [p.strip() for p in platforms.split(",")]
+    """将文章分发到多个平台，或导出国内平台发布包"""
+    platform_list = _platform_list(platforms)
     console.print(
         Panel(f"📤 分发文章到: {', '.join(platform_list)}", style="bold blue")
     )
@@ -226,6 +236,84 @@ def distribute(
     for platform, result in results.items():
         status = "✅" if result["success"] else "❌"
         console.print(f"  {status} {platform}: {result['message']}")
+    exported = [r.get("pack_dir") for r in results.values() if r.get("mode") == "export_bundle"]
+    if exported:
+        console.print(f"\n  📦 发布包目录: {exported[0]}")
+
+
+@app.command("render-domestic")
+def render_domestic(
+    article: str = typer.Option("latest", "--article", "-a", help="文章 ID 或 'latest'"),
+    platforms: str = typer.Option(
+        "wechat,juejin,zhihu,xiaohongshu,weibo", "--platforms", "-p", help="逗号分隔的平台列表"
+    ),
+):
+    """仅为国内平台生成发布包，不执行任何自动发布。"""
+    platform_list = _platform_list(platforms)
+    console.print(Panel(f"🧾 生成国内平台发布包: {', '.join(platform_list)}", style="bold blue"))
+
+    from brand_agent.agents.publish_pack import export_publish_pack
+
+    result = export_publish_pack(article, platform_list)
+    console.print(f"  ✅ 已导出: {result['pack_dir']}")
+    for platform, path in result["files"].items():
+        console.print(f"  - {platform}: {path}")
+
+
+@app.command("preview-pack")
+def preview_pack(
+    article: str = typer.Option("latest", "--article", "-a", help="文章 ID 或 'latest'"),
+    platform: str = typer.Option(
+        "wechat", "--platform", "-p", help="平台: wechat/juejin/zhihu/xiaohongshu/weibo"
+    ),
+):
+    """终端预览某个平台草稿摘要。"""
+    from brand_agent.agents.publish_pack import export_publish_pack
+
+    result = export_publish_pack(article, [platform], persist_article=False)
+    from pathlib import Path
+
+    path = Path(result["files"][platform])
+    console.print(Panel(f"👀 预览 {platform} 稿件", style="bold blue"))
+    text = path.read_text(encoding="utf-8")
+    console.print(text[:2000] + ("\n..." if len(text) > 2000 else ""))
+
+
+@app.command("preview-assets")
+def preview_assets(
+    article: str = typer.Option("latest", "--article", "-a", help="文章 ID 或 'latest'"),
+    platform: str = typer.Option("wechat", "--platform", "-p", help="平台名称"),
+):
+    """预览某个平台的素材建议。"""
+    from brand_agent.agents.publish_pack import export_publish_pack
+    from brand_agent.renderers import render_platform_draft
+    from pathlib import Path
+    import json
+
+    result = export_publish_pack(article, [platform], persist_article=False)
+    meta = json.loads(Path(result["meta_path"]).read_text(encoding="utf-8"))
+    item = meta.get("platforms", {}).get(platform)
+    if item is None:
+        draft = render_platform_draft(platform, json.loads(Path(f"data/articles/{article}.json").read_text(encoding="utf-8")) if article != "latest" else json.loads(sorted(Path("data/articles").glob("*.json"), reverse=True)[0].read_text(encoding="utf-8")))
+        item = {
+            "cover_suggestions": draft.get("cover_suggestions", []),
+            "image_prompts": draft.get("image_prompts", []),
+            "comment_suggestions": draft.get("comment_suggestions", []),
+            "engagement_prompts": draft.get("engagement_prompts", []),
+        }
+
+    console.print(Panel(f"🎨 素材建议 {platform}", style="bold blue"))
+    for label, key in [
+        ("封面建议", "cover_suggestions"),
+        ("配图提示词", "image_prompts"),
+        ("首评建议", "comment_suggestions"),
+        ("互动建议", "engagement_prompts"),
+    ]:
+        values = item.get(key, [])
+        if values:
+            console.print(f"\n[bold]{label}[/]")
+            for value in values:
+                console.print(f"  - {value}")
 
 
 @app.command()
@@ -237,7 +325,7 @@ def channels():
 
     if not settings.postiz_url or not settings.postiz_api_key:
         console.print("  ⚠️ Postiz 未配置")
-        console.print("  请在 .env 中设置 POSTIZ_URL（如 http://localhost:5000）和 POSTIZ_API_KEY")
+        console.print("  请在 .env 中设置 POSTIZ_URL（如 http://localhost:15000）和 POSTIZ_API_KEY")
         return
 
     # 健康检查

@@ -8,7 +8,7 @@
 
 - 📡 **自动采集** AI 领域每日热点（Hacker News、GitHub Trending、arXiv）
 - ✍️ **智能生成** 基于个人知识库的高质量技术文章
-- 📤 **一键分发** 到多个平台（博客、掘金、Twitter/X、知乎）
+- 📤 **多渠道分发**：X 等海外平台自动发布，公众号/掘金/知乎导出半自动发布包
 - 📊 **数据追踪** 各平台表现，优化内容策略
 
 ## 架构设计
@@ -76,7 +76,10 @@ python -m brand_agent.cli trending
 python -m brand_agent.cli generate --topic "Context Engineering"
 
 # 多平台分发
-python -m brand_agent.cli distribute --article latest --platforms blog,juejin,twitter
+python -m brand_agent.cli distribute --article latest --platforms x
+
+# 导出国内平台发布包
+python -m brand_agent.cli render-domestic --article latest --platforms wechat,juejin,zhihu,xiaohongshu,weibo
 ```
 
 ## 项目结构
@@ -106,11 +109,13 @@ personal-brand-agent/
 │   │   └── web_server.py       # Web 采集 MCP Server
 │   ├── platforms/
 │   │   ├── __init__.py
-│   │   ├── base.py             # 平台基类
-│   │   ├── blog.py             # 静态博客
-│   │   ├── juejin.py           # 掘金
-│   │   ├── twitter.py          # Twitter/X
-│   │   └── zhihu.py            # 知乎
+│   │   └── postiz.py           # Postiz 客户端（自动发布）
+│   ├── renderers/
+│   │   ├── __init__.py
+│   │   ├── common.py           # 平台稿件公共逻辑
+│   │   ├── wechat.py           # 公众号稿件渲染
+│   │   ├── juejin.py           # 掘金稿件渲染
+│   │   └── zhihu.py            # 知乎稿件渲染
 │   └── templates/
 │       ├── blog_post.md        # 博客文章模板
 │       ├── twitter_thread.md   # Twitter thread 模板
@@ -123,6 +128,39 @@ personal-brand-agent/
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
+```
+
+## 发布模式
+
+### 自动发布
+
+- `x`、`linkedin`、`bluesky`、`medium` 等平台继续通过 Postiz 发布
+- 需要先在本地启动 Postiz，并在 Web UI 中绑定账号
+
+### 半自动发布
+
+- `wechat`、`juejin`、`zhihu`、`xiaohongshu`、`weibo` 第一阶段导出本地发布包
+- 如已配置可用的 LLM，国内平台稿件会优先走平台化重写；若 LLM 不可用或调用失败，会自动回退到规则重写
+- 命令会在 `output/publish-packs/<article-id>/` 下生成：
+  - `wechat.md`
+  - `juejin.md`
+  - `zhihu.md`
+  - `xiaohongshu.md`
+  - `weibo.md`
+  - `meta.json`
+  - `README.md`
+
+示例：
+
+```bash
+# 简报 -> X 自动发布
+python -m brand_agent.cli publish-briefing -t ai-agent -p x
+
+# 简报 -> 国内平台发布包
+python -m brand_agent.cli publish-briefing -t ai-agent -p wechat,juejin,zhihu,xiaohongshu,weibo
+
+# 预览某个平台稿件
+python -m brand_agent.cli preview-pack -a latest -p wechat
 ```
 
 ## 灵感来源

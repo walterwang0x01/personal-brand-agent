@@ -17,6 +17,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from brand_agent.article_schema import build_canonical_article
 from brand_agent.briefings import (
     TOPIC_NAMES,
     briefing_file_path,
@@ -34,6 +35,14 @@ class BriefToPostState(TypedDict):
     blog_excerpt: str
     article: dict
     saved_path: str
+
+
+def _key_points_from_headlines(headlines: list[dict]) -> list[str]:
+    return [h.get("summary", "").strip() for h in headlines if h.get("summary")]
+
+
+def _headline_references(headlines: list[dict]) -> list[str]:
+    return [h.get("url", "").strip() for h in headlines if h.get("url")]
 
 
 def _extract_links(text: str) -> list[str]:
@@ -235,18 +244,30 @@ def save_article(state: BriefToPostState) -> BriefToPostState:
     topic = state.get("topic", "ai-agent")
     date = state.get("date", datetime.now().strftime("%Y-%m-%d"))
     article_id = f"briefing-{topic}-{date}"
+    blog_excerpt = state.get("blog_excerpt", "")
+    headlines = state.get("headlines", [])
 
-    article = {
-        "id": article_id,
-        "title": f"{TOPIC_NAMES.get(topic, topic)} 简报 · {date}",
-        "date": date,
-        "tags": [topic, "briefing", "daily"],
-        "excerpt": state.get("blog_excerpt", "")[:200],
-        "body": state.get("blog_excerpt", ""),
-        "twitter_thread": state.get("twitter_thread", []),
-        "source_briefing": state.get("briefing_path", ""),
-        "portfolio_url": portfolio_briefing_url(topic, date),
-    }
+    article = build_canonical_article(
+        article_id=article_id,
+        title=f"{TOPIC_NAMES.get(topic, topic)} 简报 · {date}",
+        date=date,
+        tags=[topic, "briefing", "daily"],
+        summary=blog_excerpt,
+        body_markdown=blog_excerpt,
+        source_type="briefing",
+        source_briefing=state.get("briefing_path", ""),
+        source_topic=topic,
+        key_points=_key_points_from_headlines(headlines),
+        references=_headline_references(headlines),
+        twitter_thread=state.get("twitter_thread", []),
+        platform_drafts={},
+        publish_pack_path="",
+        portfolio_url=portfolio_briefing_url(topic, date),
+        extra_fields={
+            "headlines": headlines,
+            "headlines_count": len(headlines),
+        },
+    )
 
     save_dir = Path("data/articles")
     save_dir.mkdir(parents=True, exist_ok=True)

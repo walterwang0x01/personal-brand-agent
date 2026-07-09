@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./data/chroma_db"
     notes_dir: str = "./data/notes"
 
+    # 简报主仓（tech-learning-and-projects）
+    briefings_dir: str = ""  # 默认自动探测 ../tech-learning-and-projects/learning-notes/briefings
+
     # 平台 API
     github_token: str = ""
     juejin_cookie: str = ""

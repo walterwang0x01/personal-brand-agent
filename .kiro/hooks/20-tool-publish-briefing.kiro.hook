@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "📤 简报分发到社交平台",
+  "description": "从主仓最新简报生成 Twitter Thread 并通过 Postiz 发布。",
+  "version": "1.0.0",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "执行 Brand Agent 简报分发流程。\n\n工作目录：`/Users/administrator/PycharmProjects/personal-brand-agent/`\n\n## 前置检查\n\n1. 确认 `tech-learning-and-projects` 今日简报已存在：\n```bash\ncd /Users/administrator/PycharmProjects/personal-brand-agent\n.venv/bin/python -m brand_agent.cli briefing\n```\n\n2. 确认 Postiz 连通（若未配置则只做 dry-run）：\n```bash\n.venv/bin/python -m brand_agent.cli channels\n```\n\n## 执行\n\n对 `ai-agent` 主题（默认）：\n```bash\n# 先 dry-run 预览\n.venv/bin/python -m brand_agent.cli publish-briefing -t ai-agent --dry-run\n\n# Postiz 已配置则正式发布\n.venv/bin/python -m brand_agent.cli publish-briefing -t ai-agent -p x\n```\n\n可选：`-t china-tech` 或 `-t global-tech`\n\n## 输出\n\n- 简报来源路径\n- Thread 条数与预览\n- Postiz 发布结果（或 dry-run 说明）\n\n使用中文回复。"
+  }
+}
